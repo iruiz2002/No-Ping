@@ -10,12 +10,14 @@ import os
 
 from src.network.packet_handler import PacketHandler
 from src.vpn.vpn_manager import VPNManager
+from src.steam.steam_manager import SteamManager
 
 class MainWindow:
     def __init__(self, vpn_manager: VPNManager, packet_handler: PacketHandler):
         """Initialize the main window"""
         self.vpn_manager = vpn_manager
         self.packet_handler = packet_handler
+        self.steam_manager = SteamManager()
         
         # Configure theme
         ctk.set_appearance_mode("dark")
@@ -27,7 +29,7 @@ class MainWindow:
         self.root.geometry("800x600")
         
         self._create_widgets()
-        self._load_game_list()
+        self._load_steam_games()
 
     def _create_widgets(self):
         """Create and arrange GUI widgets"""
@@ -51,6 +53,15 @@ class MainWindow:
         self.game_combo = ctk.CTkComboBox(game_frame, values=[])
         self.game_combo.pack(side="left", fill="x", expand=True, padx=5)
         
+        # Refresh button
+        self.refresh_button = ctk.CTkButton(
+            game_frame,
+            text="↻",
+            width=30,
+            command=self._load_steam_games
+        )
+        self.refresh_button.pack(side="left", padx=5)
+        
         # Server selection
         server_frame = ctk.CTkFrame(self.main_frame)
         server_frame.pack(fill="x", padx=20, pady=10)
@@ -69,6 +80,14 @@ class MainWindow:
             font=("Helvetica", 12)
         )
         self.status_label.pack(pady=20)
+        
+        # Game info
+        self.game_info = ctk.CTkTextbox(
+            self.main_frame,
+            height=100,
+            state="disabled"
+        )
+        self.game_info.pack(fill="x", padx=20, pady=10)
         
         # Control buttons
         button_frame = ctk.CTkFrame(self.main_frame)
@@ -89,21 +108,43 @@ class MainWindow:
         )
         self.stop_button.pack(side="left", padx=5, expand=True)
 
-    def _load_game_list(self):
-        """Load list of supported games from configuration"""
+    def _load_steam_games(self):
+        """Load list of installed Steam games"""
         try:
-            config_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                'config',
-                'games.json'
-            )
-            
-            if os.path.exists(config_path):
-                with open(config_path, 'r') as f:
-                    games = json.load(f)
-                    self.game_combo.configure(values=list(games.keys()))
+            games = self.steam_manager.get_installed_games()
+            if games:
+                self.game_combo.configure(values=list(games.keys()))
+                self.status_label.configure(text="Steam games loaded successfully")
+            else:
+                self.status_label.configure(text="No Steam games found")
         except Exception as e:
-            self.status_label.configure(text=f"Error loading game list: {e}")
+            self.status_label.configure(text=f"Error loading Steam games: {e}")
+
+    def _update_game_info(self, game_name: str):
+        """Update game information display"""
+        if not game_name:
+            return
+            
+        game_data = self.steam_manager.installed_games.get(game_name, {})
+        if not game_data:
+            return
+            
+        app_id = game_data.get('app_id')
+        if not app_id:
+            return
+            
+        # Get server list and ports
+        servers = self.steam_manager.get_server_list(int(app_id))
+        ports = self.steam_manager.get_game_ports(int(app_id))
+        
+        # Update info display
+        self.game_info.configure(state="normal")
+        self.game_info.delete("1.0", "end")
+        self.game_info.insert("1.0", f"Game: {game_name}\n")
+        self.game_info.insert("end", f"App ID: {app_id}\n")
+        self.game_info.insert("end", f"Ports: {', '.join(map(str, ports))}\n")
+        self.game_info.insert("end", f"Available Servers: {len(servers)}")
+        self.game_info.configure(state="disabled")
 
     def _start_optimization(self):
         """Start network optimization"""
@@ -115,10 +156,23 @@ class MainWindow:
             return
             
         try:
+            game_data = self.steam_manager.installed_games.get(game, {})
+            if not game_data:
+                self.status_label.configure(text="Game data not found")
+                return
+                
+            app_id = int(game_data.get('app_id', 0))
+            if not app_id:
+                self.status_label.configure(text="Invalid game ID")
+                return
+                
+            # Get game ports
+            ports = self.steam_manager.get_game_ports(app_id)
+            
             # Connect to VPN
             if self.vpn_manager.connect(server):
-                # Start packet capture
-                self.packet_handler.start_capture([])  # Add game ports here
+                # Start packet capture with game ports
+                self.packet_handler.start_capture(ports)
                 
                 self.status_label.configure(text="Optimization running...")
                 self.start_button.configure(state="disabled")
