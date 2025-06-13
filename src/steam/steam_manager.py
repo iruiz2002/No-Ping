@@ -301,3 +301,59 @@ class SteamManager:
     def get_current_server(self) -> Optional[Dict]:
         """Get current server information"""
         return self.current_server 
+
+    def detect_running_game(self) -> Optional[str]:
+        """Detect if any installed Steam game executable is currently running.
+
+        Returns
+        -------
+        Optional[str]
+            The name of the running game if detected, otherwise ``None``.
+        """
+        # Ensure we have the catalog of installed games
+        if not self.installed_games:
+            try:
+                self.get_installed_games()
+            except Exception:
+                return None
+
+        for proc in psutil.process_iter(['name', 'exe']):
+            try:
+                exe_path = (proc.info.get('exe') or '').lower()
+                if not exe_path:
+                    continue
+
+                for game_name, info in self.installed_games.items():
+                    install_dir = info.get('install_dir', '').lower()
+                    if install_dir and install_dir in exe_path:
+                        return game_name
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return None
+
+    def _auto_game_watcher(self):
+        """Background thread that keeps ``current_game`` in sync with running processes."""
+        while not self.stop_monitoring.is_set():
+            try:
+                game_name = self.detect_running_game()
+                if game_name and (not self.current_game or self.current_game.get('app_id') != self.installed_games[game_name]['app_id']):
+                    self.logger.info(f"Detected running game: {game_name}")
+                    self.set_current_game(game_name)
+                elif not game_name and self.current_game:
+                    # Game closed – clear state
+                    self.logger.info(f"Game closed: {self.current_game.get('app_id')}")
+                    self.current_game = None
+                    self.current_server = None
+            except Exception as e:
+                self.logger.error(f"Error in auto game watcher: {e}")
+            # Poll every 3 s, responsive yet lightweight
+            self.stop_monitoring.wait(timeout=3)
+
+    def enable_auto_game_detection(self):
+        """Start automatic game detection in the background (idempotent)."""
+        if self.monitoring_thread and self.monitoring_thread.is_alive():
+            # Reuse the existing stop event but ensure watcher thread exists
+            pass
+        if not getattr(self, '_game_watch_thread', None) or not self._game_watch_thread.is_alive():
+            self._game_watch_thread = threading.Thread(target=self._auto_game_watcher, daemon=True)
+            self._game_watch_thread.start() 
