@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.network.packet_handler import PacketHandler
 from src.vpn.vpn_manager import VPNManager
 from src.steam.steam_manager import SteamManager
+from src.steam.game_detector import GameDetector
 from src.ui.system_tray import SystemTray
 
 class BackgroundService:
@@ -43,18 +44,29 @@ class BackgroundService:
         # Load or create settings
         self.settings = self._load_settings()
         
+        # Initialize game detector
+        self.game_detector = GameDetector(
+            steam_path=self.steam_manager.steam_path,
+            on_game_launched=self._on_game_launched,
+            on_game_closed=self._on_game_closed
+        )
+        
         # Create system tray
         self.tray = SystemTray(
             on_start=self.start_optimization,
             on_stop=self.stop_optimization
         )
         
+        # State
+        self.auto_mode = False
+        
     def _load_settings(self) -> dict:
         """Load settings from file"""
         settings_file = "settings.json"
         default_settings = {
             "preferred_server": "US East",
-            "last_game": None
+            "last_game": None,
+            "auto_mode": True  # Enable auto-mode by default
         }
         
         try:
@@ -74,30 +86,67 @@ class BackgroundService:
         except Exception as e:
             self.logger.error(f"Error saving settings: {e}")
             
-    def _get_active_game(self) -> Optional[dict]:
-        """Get currently running Steam game"""
+    def _get_game_data(self, game_name: str) -> Optional[dict]:
+        """Get game data from Steam"""
         games = self.steam_manager.get_installed_games()
         
-        # For now, return the last used game or first available game
-        if self.settings["last_game"] and self.settings["last_game"] in games:
-            return {
-                "name": self.settings["last_game"],
-                "data": games[self.settings["last_game"]]
-            }
-        elif games:
-            game_name = next(iter(games))
+        # Try exact match
+        if game_name in games:
             return {
                 "name": game_name,
                 "data": games[game_name]
             }
             
+        # Try case-insensitive match
+        game_name_lower = game_name.lower()
+        for name, data in games.items():
+            if name.lower() == game_name_lower:
+                return {
+                    "name": name,
+                    "data": data
+                }
+                
         return None
         
-    def start_optimization(self):
+    def _on_game_launched(self, game_name: str):
+        """Handle game launch event"""
+        if not self.settings.get("auto_mode", True):
+            return
+            
+        self.logger.info(f"Game launched: {game_name}")
+        self.start_optimization(game_name)
+        
+    def _on_game_closed(self):
+        """Handle game close event"""
+        if not self.settings.get("auto_mode", True):
+            return
+            
+        self.logger.info("Game closed")
+        self.stop_optimization()
+        
+    def start_optimization(self, game_name: Optional[str] = None):
         """Start network optimization"""
         try:
-            # Get active game
-            game = self._get_active_game()
+            # Get game data
+            if game_name:
+                game = self._get_game_data(game_name)
+            else:
+                # Use last game or first available
+                games = self.steam_manager.get_installed_games()
+                if self.settings["last_game"] and self.settings["last_game"] in games:
+                    game = {
+                        "name": self.settings["last_game"],
+                        "data": games[self.settings["last_game"]]
+                    }
+                elif games:
+                    game_name = next(iter(games))
+                    game = {
+                        "name": game_name,
+                        "data": games[game_name]
+                    }
+                else:
+                    game = None
+                    
             if not game:
                 self.logger.error("No game selected")
                 return
@@ -139,7 +188,17 @@ class BackgroundService:
     def run(self):
         """Run the background service"""
         self.logger.info("Starting No Ping background service...")
+        
+        # Start game detection
+        if self.settings.get("auto_mode", True):
+            self.game_detector.start()
+            self.logger.info("Auto-mode enabled")
+            
+        # Run system tray
         self.tray.run()
+        
+        # Cleanup
+        self.game_detector.stop()
 
 if __name__ == "__main__":
     service = BackgroundService()
