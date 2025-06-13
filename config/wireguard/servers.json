@@ -1,0 +1,6 @@
+{
+    "US East": "/etc/wireguard/us-east.conf",
+    "US West": "/etc/wireguard/us-west.conf",
+    "EU Central": "/etc/wireguard/eu-central.conf",
+    "Asia Pacific": "/etc/wireguard/ap.conf"
+} 

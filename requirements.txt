@@ -1,0 +1,7 @@
+pydivert>=2.1.0
+python-wireguard>=0.1.0
+psutil>=5.9.0
+tkinter
+customtkinter>=5.2.0
+requests>=2.31.0
+python-dotenv>=1.0.0 
