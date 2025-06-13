@@ -5,16 +5,13 @@ Handles Steam game detection and server information
 
 import os
 import vdf
+import json
 import logging
 from typing import Dict, List, Optional
-from steam.client import SteamClient
-from steam.core.msg import MsgProto
-from steam.enums.emsg import EMsg
 
 class SteamManager:
     def __init__(self):
         """Initialize Steam manager"""
-        self.client = SteamClient()
         self.logger = logging.getLogger(__name__)
         self.steam_path = self._find_steam_path()
         self.installed_games = {}
@@ -30,6 +27,7 @@ class SteamManager:
         
         for path in possible_paths:
             if os.path.exists(path):
+                self.logger.info(f"Found Steam installation at: {path}")
                 return path
                 
         self.logger.warning("Steam installation not found")
@@ -72,53 +70,39 @@ class SteamManager:
                                 }
             
             self.installed_games = games
+            self.logger.info(f"Found {len(games)} installed games")
             return games
             
         except Exception as e:
             self.logger.error(f"Error reading Steam games: {e}")
             return {}
 
-    def get_server_list(self, app_id: int) -> List[Dict]:
-        """Get server list for a specific game"""
-        try:
-            if not self.client.logged_on:
-                self.client.anonymous_login()
-                
-            # Request server list
-            message = MsgProto(EMsg.ClientGMSServerQuery)
-            message.body.app_id = app_id
-            message.body.geo_location_ip = 0
-            message.body.region_code = 0
-            
-            response = self.client.send_message_and_wait(message, EMsg.ClientGMSServerQueryResponse)
-            
-            servers = []
-            if response and hasattr(response.body, 'servers'):
-                for server in response.body.servers:
-                    servers.append({
-                        'addr': server.server_ip,
-                        'port': server.server_port,
-                        'region': server.region
-                    })
-                    
-            return servers
-            
-        except Exception as e:
-            self.logger.error(f"Error getting server list: {e}")
-            return []
-
     def get_game_ports(self, app_id: int) -> List[int]:
         """Get network ports used by a game"""
-        # Common game ports
+        # Common game ports for popular games
         common_ports = {
             730: [27015, 27016, 27017, 27018, 27019, 27020],  # CS:GO
             570: [27015, 27016, 27017, 27018, 27019, 27020],  # Dota 2
             440: [27015, 27016, 27017, 27018, 27019, 27020],  # Team Fortress 2
+            252490: [28015, 28016, 28017],  # Rust
+            346110: [27015, 27016, 7777, 7778],  # ARK
+            4000: [27015, 27016, 27017],  # Garry's Mod
+            1938090: [7777, 7778, 7779],  # Ready or Not
+            1172470: [7777, 7778, 7779],  # Apex Legends
+            359550: [27015, 27016, 27017],  # Rainbow Six Siege
+            1599340: [27015, 27016, 27017]  # Lost Ark
         }
         
         return common_ports.get(app_id, [27015])  # Default to common Source engine port
 
-    def __del__(self):
-        """Cleanup when object is destroyed"""
-        if self.client and self.client.logged_on:
-            self.client.logout() 
+    def get_server_regions(self) -> List[str]:
+        """Get list of available server regions"""
+        return [
+            "US East",
+            "US West",
+            "Europe",
+            "Asia",
+            "Australia",
+            "South America",
+            "South Africa"
+        ] 
