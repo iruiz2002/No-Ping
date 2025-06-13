@@ -6,32 +6,42 @@ A network optimization tool for reducing game latency
 
 import os
 import sys
+import logging
 from dotenv import load_dotenv
 
 # Add src directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.network.packet_handler import PacketHandler
-from src.vpn.vpn_manager import VPNManager
-from src.ui.main_window import MainWindow
+from src.background import BackgroundService
 
 def main():
     """Main entry point of the application"""
     # Load environment variables
     load_dotenv()
     
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler("noping.log"),
+            logging.StreamHandler()
+        ]
+    )
+    logger = logging.getLogger(__name__)
+    
     try:
-        # Initialize components
-        vpn_manager = VPNManager()
-        packet_handler = PacketHandler()
-        
-        # Start UI
-        app = MainWindow(vpn_manager, packet_handler)
-        app.run()
-        
+        # Start background service
+        service = BackgroundService()
+        service.run()
+    except KeyboardInterrupt:
+        logger.info("Application interrupted by user")
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error(f"Error: {e}")
         sys.exit(1)
+    finally:
+        logger.info("Application shutdown complete")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main() 

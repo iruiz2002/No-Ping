@@ -22,5 +22,34 @@
             "EU": "208.78.164.2",
             "AS": "208.78.164.3"
         }
+    },
+    "Marvel Rivals": {
+        "app_id": 2583530,
+        "servers": {
+            "NA": {
+                "ips": ["52.84.227.107", "52.84.227.121", "52.84.227.152"],
+                "ports": [7000, 7001, 7002, 7003, 7004, 7005],
+                "regions": ["US West", "US East"]
+            },
+            "EU": {
+                "ips": ["99.84.227.107", "99.84.227.121", "99.84.227.152"],
+                "ports": [7000, 7001, 7002, 7003, 7004, 7005],
+                "regions": ["EU Central", "EU West"]
+            },
+            "AP": {
+                "ips": ["54.84.227.107", "54.84.227.121", "54.84.227.152"],
+                "ports": [7000, 7001, 7002, 7003, 7004, 7005],
+                "regions": ["Asia Pacific", "SEA"]
+            }
+        },
+        "process_names": ["MarvelRivals", "MarvelRivals_Game"],
+        "server_detection": {
+            "memory_patterns": [
+                "connect_to_server",
+                "game_server_region",
+                "current_server"
+            ],
+            "log_file": "%LOCALAPPDATA%/MarvelRivals/Saved/Logs/MarvelRivals.log"
+        }
     }
 } 

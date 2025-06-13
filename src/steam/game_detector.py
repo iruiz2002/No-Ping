@@ -11,6 +11,17 @@ from typing import Optional, Dict, Callable
 import threading
 
 class GameDetector:
+    # Steam's internal processes to ignore
+    IGNORE_PROCESSES = {
+        'steam.exe',
+        'steamservice.exe',
+        'steamwebhelper.exe',
+        'GameOverlayUI.exe',
+        'Steam.exe',
+        'cef.win7x64.exe',
+        'steamclean.exe'
+    }
+
     def __init__(self, steam_path: str, on_game_launched: Callable[[str], None], on_game_closed: Callable[[], None]):
         """Initialize game detector"""
         self.logger = logging.getLogger(__name__)
@@ -27,8 +38,18 @@ class GameDetector:
             if not process.exe():
                 return False
                 
+            # Skip Steam's internal processes
+            if process.name().lower() in self.IGNORE_PROCESSES:
+                return False
+                
             # Check if process is from Steam directory
-            return self.steam_path.lower() in process.exe().lower()
+            exe_path = process.exe().lower()
+            steam_path = self.steam_path.lower()
+            
+            # Check if it's in the Steam directory and specifically in the common or steamapps directory
+            return (steam_path in exe_path and 
+                   ('common' in exe_path or 'steamapps' in exe_path))
+                   
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             return False
             
@@ -40,16 +61,31 @@ class GameDetector:
             if not exe_path:
                 return None
                 
-            # Get the directory name (usually the game name)
-            game_dir = os.path.basename(os.path.dirname(exe_path))
+            # Get the directory structure
+            path_parts = exe_path.lower().split(os.sep)
             
-            # Clean up common suffixes
-            name = game_dir.replace("steamapps", "").replace("common", "").strip()
-            if name:
-                return name
+            # Find 'common' or 'steamapps' directory index
+            try:
+                common_idx = path_parts.index('common')
+                if common_idx + 1 < len(path_parts):
+                    return path_parts[common_idx + 1].title()
+            except ValueError:
+                pass
                 
-            # Fallback to process name
-            return process.name().replace(".exe", "")
+            try:
+                steamapps_idx = path_parts.index('steamapps')
+                if steamapps_idx + 2 < len(path_parts):
+                    return path_parts[steamapps_idx + 2].title()
+            except ValueError:
+                pass
+                
+            # Fallback: Get parent directory name
+            parent_dir = os.path.basename(os.path.dirname(exe_path))
+            if parent_dir and parent_dir.lower() not in ['bin', 'binaries', 'win64', 'win32']:
+                return parent_dir.title()
+                
+            # Last resort: use process name
+            return process.name().replace('.exe', '').title()
             
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             return None
@@ -63,15 +99,20 @@ class GameDetector:
                 # Look for Steam games in running processes
                 found_game = False
                 for proc in psutil.process_iter(['pid', 'name', 'exe']):
-                    if self._is_steam_game(proc):
-                        game_name = self._get_game_name(proc)
-                        if game_name:
-                            found_game = True
-                            if self.current_game != game_name:
-                                self.logger.info(f"Detected game: {game_name}")
-                                self.current_game = game_name
-                                self.on_game_launched(game_name)
-                            break
+                    try:
+                        if proc.exe():  # Only check processes with valid executables
+                            self.logger.debug(f"Checking process: {proc.name()} ({proc.exe()})")
+                            if self._is_steam_game(proc):
+                                game_name = self._get_game_name(proc)
+                                if game_name:
+                                    found_game = True
+                                    if self.current_game != game_name:
+                                        self.logger.info(f"Detected game: {game_name}")
+                                        self.current_game = game_name
+                                        self.on_game_launched(game_name)
+                                    break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        continue
                 
                 # If no game is running but we had one before
                 if not found_game and self.current_game:
@@ -80,11 +121,11 @@ class GameDetector:
                     self.on_game_closed()
                     
                 # Sleep to prevent high CPU usage
-                time.sleep(5)
+                time.sleep(2)
                 
             except Exception as e:
                 self.logger.error(f"Error monitoring games: {e}")
-                time.sleep(5)
+                time.sleep(2)
                 
     def start(self):
         """Start game detection"""

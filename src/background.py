@@ -9,6 +9,8 @@ import logging
 from typing import Optional
 import json
 from dotenv import load_dotenv
+import signal
+import time
 
 # Add src directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -52,13 +54,47 @@ class BackgroundService:
         )
         
         # Create system tray
-        self.tray = SystemTray(
-            on_start=self.start_optimization,
-            on_stop=self.stop_optimization
-        )
+        self.tray = None
+        self.init_system_tray()
         
         # State
         self.auto_mode = False
+        self.running = True
+        
+        # Set up signal handlers
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        
+    def init_system_tray(self, max_retries=3):
+        """Initialize system tray with retries"""
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                if self.tray:
+                    try:
+                        self.tray.stop()
+                    except:
+                        pass
+                
+                self.tray = SystemTray(
+                    on_start=self.start_optimization,
+                    on_stop=self.stop_optimization
+                )
+                self.tray.run()
+                return True
+            except Exception as e:
+                retry_count += 1
+                self.logger.error(f"Failed to initialize system tray (attempt {retry_count}/{max_retries}): {e}")
+                if retry_count < max_retries:
+                    time.sleep(1)  # Wait before retrying
+                
+        self.logger.error("Failed to initialize system tray after all retries")
+        return False
+        
+    def _handle_shutdown(self, signum, frame):
+        """Handle shutdown signals"""
+        self.logger.info("Shutdown signal received")
+        self.stop()
         
     def _load_settings(self) -> dict:
         """Load settings from file"""
@@ -159,11 +195,19 @@ class BackgroundService:
                 
             ports = self.steam_manager.get_game_ports(app_id)
             
-            # Connect to VPN
+            # Connect to VPN and get optimal routes
             server = self.settings["preferred_server"]
             if self.vpn_manager.connect(server):
-                # Start packet capture
-                self.packet_handler.start_capture(ports)
+                # Get optimal routes
+                routes = self.vpn_manager.get_optimal_routes(server)
+                if routes:
+                    self.logger.info(f"Using optimal routes: {routes}")
+                    # Start packet capture with optimization
+                    self.packet_handler.start_capture(ports, target_ips=routes)
+                else:
+                    # Fallback to basic capture
+                    self.packet_handler.start_capture(ports)
+                    
                 self.logger.info(f"Started optimization for {game['name']}")
                 
                 # Save settings
@@ -189,16 +233,38 @@ class BackgroundService:
         """Run the background service"""
         self.logger.info("Starting No Ping background service...")
         
-        # Start game detection
-        if self.settings.get("auto_mode", True):
-            self.game_detector.start()
-            self.logger.info("Auto-mode enabled")
+        try:
+            # Start game detection
+            if self.settings.get("auto_mode", True):
+                self.game_detector.start()
+                self.logger.info("Auto-mode enabled")
+                
+            # Keep the main thread alive
+            while self.running:
+                # Check if system tray is working
+                if not self.tray or not self.tray.thread or not self.tray.thread.is_alive():
+                    self.logger.warning("System tray not running, attempting to reinitialize...")
+                    if not self.init_system_tray():
+                        self.logger.error("Failed to reinitialize system tray")
+                        break
+                time.sleep(1)
+                
+        except Exception as e:
+            self.logger.error(f"Error in background service: {e}")
+        finally:
+            self.stop()
             
-        # Run system tray
-        self.tray.run()
+    def stop(self):
+        """Stop the background service"""
+        self.running = False
         
-        # Cleanup
+        # Stop all components
         self.game_detector.stop()
+        self.stop_optimization()
+        if self.tray:
+            self.tray.stop()
+        
+        self.logger.info("Background service stopped")
 
 if __name__ == "__main__":
     service = BackgroundService()
